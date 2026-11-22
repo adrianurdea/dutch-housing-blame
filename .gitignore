@@ -1,28 +1,20 @@
-# --- Data: never commit Reddit data (raw or processed). It lives on SURFdrive. ---
+# data
 data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
-
-# Annotation files contain comment text; keep only the codebook in git.
 annotation/*
 !annotation/.gitkeep
 !annotation/codebook.md
-
-# Crawl log
 crawl.log
 
-# Secrets (pseudonymisation salt, API keys)
 .env
 *.salt
 
-# Python / Jupyter
 .venv/
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
-
-# Editors / OS
 .vscode/
 .idea/
 .DS_Store

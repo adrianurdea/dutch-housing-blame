@@ -1,23 +1,8 @@
-"""Collect all posts and comments of two subreddits from the Arctic Shift API.
+"""Download all posts and comments of r/thenetherlands and r/Netherlands from the
+Arctic Shift API, one file per week (data/raw/<kind>/<subreddit>/<week>.jsonl.zst).
 
-The API's keyword search times out on these large subreddits, so we download
-everything in weekly windows and filter for housing later (in the notebook).
-
-Design:
-- One output file per (kind, subreddit, week): data/raw/<kind>/<subreddit>/<week_start>.jsonl.zst
-- Resumable: a week whose file already exists is skipped. Files are written to
-  a .part file first and renamed only when the week is complete.
-- Polite: at most 1 request per second. We ask for limit=auto (the server
-  returns 100-1000 items depending on its load), so fewer requests are needed.
-- On 429 (rate limit) we wait for the X-RateLimit-Reset header. On 422
-  ("Timeout", the query was too heavy right now) and 5xx we retry after a short
-  increasing backoff (5, 10, 20, ... s); waiting for the full reset is not needed.
-- Weeks that still fail are logged to data/raw/failures.csv and retried on the next run.
-
-Usage (from the project root):
-    python collect.py --start 2024-01-01 --end 2026-11-01
-    python collect.py --start 2025-06-02 --end 2025-06-09     # one test week
-    python collect.py --weeks 2024-01-01 2024-04-01           # specific weeks
+Weeks that are already downloaded are skipped, so the script can be restarted.
+Example: python collect.py --start 2024-01-01 --end 2026-11-01
 """
 
 import argparse
@@ -35,8 +20,6 @@ HEADERS = {"User-Agent": "VU-SocialWeb-Group20-research/1.0 (university course p
 SUBREDDITS = ["thenetherlands", "Netherlands"]
 KINDS = ["posts", "comments"]
 
-# Only the fields we need (raw files still contain usernames; they are hashed
-# during processing and the raw files never leave the group's SURFdrive).
 COMMON_FIELDS = ["id", "author", "author_flair_text", "created_utc", "subreddit", "score",
                  "distinguished", "retrieved_on"]
 FIELDS = {
@@ -46,20 +29,18 @@ FIELDS = {
 
 RAW_DIR = Path("data/raw")
 FAILURE_LOG = RAW_DIR / "failures.csv"
-MIN_INTERVAL = 1.0   # seconds between requests
+MIN_INTERVAL = 1.0  # max 1 request per second
 MAX_RETRIES = 6
-MIN_PAGE = 100       # limit=auto returns at least 100 items unless the window is exhausted
+MIN_PAGE = 100
 
 _last_request = 0.0
 
 
 def get_page(kind, subreddit, after, before):
-    """Fetch one page (100-1000 items, oldest first) with rate limiting and retries."""
     global _last_request
     params = {"subreddit": subreddit, "after": after, "before": before, "sort": "asc",
               "limit": "auto", "fields": ",".join(FIELDS[kind])}
     for attempt in range(1, MAX_RETRIES + 1):
-        # Wait so we never send more than one request per second
         wait = MIN_INTERVAL - (time.time() - _last_request)
         if wait > 0:
             time.sleep(wait)
@@ -76,9 +57,8 @@ def get_page(kind, subreddit, after, before):
                 error = f"200 without data: {r.text[:200]}"
             else:
                 error = f"HTTP {r.status_code}: {r.text[:200]}"
-            # Only a real rate limit (429) needs the full reset wait
             reset = r.headers.get("X-RateLimit-Reset") if r.status_code == 429 else None
-        # Back off: server's reset time on 429, otherwise 5, 10, 20, ... seconds
+        # on a rate limit wait until the reset, otherwise retry after 5, 10, 20, ... s
         delay = float(reset) + 1 if reset else 5 * 2 ** (attempt - 1)
         print(f"    retry {attempt}/{MAX_RETRIES} in {delay:.0f}s ({error})")
         time.sleep(delay)
@@ -86,25 +66,21 @@ def get_page(kind, subreddit, after, before):
 
 
 def crawl_window(kind, subreddit, start, end):
-    """Return all items created in [start, end), paging forward by created_utc."""
     items, seen = [], set()
-    cursor = start - 1  # 'after' is treated as exclusive; we de-duplicate by id anyway
+    cursor = start - 1
     while True:
         page = get_page(kind, subreddit, cursor, end)
         new = [x for x in page if x["id"] not in seen]
-        for x in new:
-            seen.add(x["id"])
+        seen.update(x["id"] for x in new)
         items.extend(new)
         if len(page) < MIN_PAGE:
-            return items  # last page
+            return items
+        # go back one second so posts with the same timestamp are not skipped
         last_ts = page[-1]["created_utc"]
-        # Step back 1 second so items sharing the last timestamp are not lost;
-        # if a page brought nothing new (>100 items in one second), move on.
         cursor = last_ts - 1 if new and last_ts - 1 > cursor else last_ts
 
 
 def save_jsonl_zst(items, path):
-    """Write items as zstd-compressed JSON lines, atomically (via a .part file)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".part")
     with open(tmp, "wb") as f, zstandard.ZstdCompressor(level=10).stream_writer(f) as w:
@@ -123,7 +99,6 @@ def log_failure(kind, subreddit, week, error):
 
 
 def weeks(start, end):
-    """Yield (week_start, week_end) dates in steps of 7 days; the last week is cut at `end`."""
     d = start
     while d < end:
         yield d, min(d + dt.timedelta(days=7), end)
@@ -135,12 +110,12 @@ def to_epoch(d):
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--start", default="2024-01-01", help="first day (UTC, inclusive)")
-    p.add_argument("--end", default="2026-11-01", help="end day (UTC, exclusive)")
+    p = argparse.ArgumentParser(description="Download Reddit data from Arctic Shift per week.")
+    p.add_argument("--start", default="2024-01-01")
+    p.add_argument("--end", default="2026-11-01", help="not included")
     p.add_argument("--subreddits", nargs="+", default=SUBREDDITS)
     p.add_argument("--kinds", nargs="+", default=KINDS, choices=KINDS)
-    p.add_argument("--weeks", nargs="+", help="only these week start days (overrides --start/--end)")
+    p.add_argument("--weeks", nargs="+", help="only download weeks starting on these days")
     args = p.parse_args()
     start, end = dt.date.fromisoformat(args.start), dt.date.fromisoformat(args.end)
     if args.weeks:
