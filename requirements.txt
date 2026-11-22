@@ -1,0 +1,29 @@
+# Python 3.12. Install with: pip install -r requirements.txt
+# Top-level pins; after the first install we also commit requirements-lock.txt (pip freeze).
+
+# Data collection
+requests==2.34.2
+tqdm==4.70.1
+zstandard==0.25.0          # only needed if we read .zst dump files
+python-dotenv==1.2.4       # loads the pseudonymisation salt from .env
+
+# Data handling
+pandas==3.1.0
+numpy==2.5.4
+pyarrow==26.0.0            # parquet files in data/processed
+
+# Language detection
+lingua-language-detector==2.2.0
+
+# Statistics and evaluation
+scipy==1.18.1
+statsmodels==0.15.0        # proportion confidence intervals and tests
+scikit-learn==1.9.1        # Cohen's kappa, precision/recall/F1
+
+# Plots
+matplotlib==3.11.2
+seaborn==0.13.2
+
+# Notebook
+jupyterlab==4.6.4
+ipykernel==7.4.0
