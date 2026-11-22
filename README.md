@@ -11,7 +11,10 @@ English-language communities blame different actors?
 ## Repository structure
 | Path | Contents |
 |---|---|
-| `notebooks/` | Analysis notebook |
+| `notebooks/01_data_pipeline.ipynb` | Cleaning, pseudonymisation, housing filter, language detection |
+| `notebooks/02_annotation.ipynb` | Codebook, annotation samples, inter-annotator agreement |
+| `notebooks/03_comparison.ipynb` | Blame targets per community (SQ1, SQ2) |
+| `notebooks/04_interaction.ipynb` | Shared users, reply and co-occurrence networks |
 | `collect.py` | Data collection |
 | `data/` | Datasets |
 | `annotation/` | Annotation codebook |
